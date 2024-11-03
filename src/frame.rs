@@ -1,3 +1,8 @@
+use std::{io::Read, net::TcpStream};
+
+use crate::ws_client::WsClientError;
+
+#[derive(Debug)]
 pub struct Frame {
     pub fin: bool,
     pub rsv1: bool,
@@ -52,5 +57,34 @@ impl Frame {
         bytes.extend_from_slice(&self.payload_data);
 
         bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Frame {
+        let first_byte = bytes[0];
+        let second_byte = bytes[1];
+
+        let fin = first_byte & 0x80 != 0;
+        let rsv1 = first_byte & 0x40 != 0;
+        let rsv2 = first_byte & 0x20 != 0;
+        let rsv3 = first_byte & 0x10 != 0;
+        let opcode = first_byte & 0x0F;
+
+        let mask = second_byte & 0x80 != 0;
+        let payload_length = second_byte & 0x7F;
+
+        // TODO: for now, we're assuming the payload length is less than 126
+        let rest = &bytes[2..];
+
+        Frame {
+            fin,
+            rsv1,
+            rsv2,
+            rsv3,
+            opcode,
+            mask,
+            payload_length: payload_length as u64,
+            masking_key: None,
+            payload_data: rest.to_vec(),
+        }
     }
 }

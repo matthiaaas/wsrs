@@ -5,6 +5,7 @@ use std::{
 
 use crate::frame::Frame;
 
+#[derive(Debug)]
 pub enum WsClientError {
     FailedHandshake(String),
     FailedRecv(String),
@@ -72,21 +73,56 @@ impl<'a> WsClient<'a> {
 
         self.stream.write_all(&frame.to_bytes()).unwrap();
 
+        self.recv().unwrap();
+
         let buffer = &mut [0; 1024];
         self.stream.read(buffer).unwrap();
         println!("{:?}", buffer);
     }
 
-    fn recv(&mut self) -> Result<(), WsClientError> {
-        let reader = BufReader::new(&mut self.stream);
+    pub fn recv(&mut self) -> Result<(), WsClientError> {
+        let mut frames = Vec::<Frame>::new();
 
-        for byte in reader.bytes() {
-            let byte = byte.map_err(|e| {
+        loop {
+            let first_byte_buf = &mut [0; 1];
+            self.stream.read(first_byte_buf).map_err(|e| {
                 WsClientError::FailedRecv(format!("Failed to read from stream: {}", e))
             })?;
+            let first_byte = first_byte_buf[0];
+
+            let fin = (first_byte & 0x80) != 0;
+            let opcode = first_byte & 0x0F;
+
+            let second_byte_buf = &mut [0; 1];
+            self.stream.read(second_byte_buf).map_err(|e| {
+                WsClientError::FailedRecv(format!("Failed to read from stream: {}", e))
+            })?;
+            let second_byte = second_byte_buf[0];
+
+            let mask = (second_byte & 0x80) != 0;
+            let payload_length = second_byte & 0x7F;
+
+            let payload = self.rcv_frame_payload(payload_length);
+            let mut bytes = vec![first_byte, second_byte];
+            bytes.extend(payload);
+            frames.push(Frame::from_bytes(&bytes));
+
+            if fin {
+                break;
+            }
+        }
+
+        for frame in frames {
+            println!("{:?}", frame);
         }
 
         Ok(())
+    }
+
+    fn rcv_frame_payload(&mut self, payload_length: u8) -> Vec<u8> {
+        let mut buffer = vec![0; payload_length as usize];
+        self.stream.read_exact(&mut buffer).unwrap();
+        buffer
     }
 
     fn close(&mut self) {
